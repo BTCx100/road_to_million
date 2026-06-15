@@ -385,7 +385,7 @@
 
 <script>
 const SEED_ROWS = [
-  ["1 มิ.ย. 69","173770",["",""],["",""],"95"],
+  ["1 มิ.ย. 69","173770",["848","415"],["410","938"],"95"],
   ["16 พ.ค. 69","107387",["298","091"],["602","716"],"08"],
   ["2 พ.ค. 69","536077",["267","318"],["065","153"],"43"],
   ["16 เม.ย. 69","309612",["355","108"],["868","424"],"77"],
@@ -1091,27 +1091,41 @@ function parseApiDate(s){ // "1 มิถุนายน 2569" หรือ "01 
   return `${parseInt(p[0],10)} ${short} ${String(Number(p[2])%100).padStart(2,'0')}`;
 }
 /* แปลง response GLO -> โครงสร้าง DATA ของเรา
-   GLO ส่ง: response.data.{date,month,year,prizes:{first,last2,last3f,last3b,...}} (โครงสร้างจริงอาจต่างเล็กน้อย) */
+   GLO อาจส่งหลายรูปแบบ — รองรับทั้ง prizes เป็น object หรือ array, number เป็น array/string */
 function gloToDraw(d){
-  // รองรับหลายรูปแบบ key ที่ GLO อาจใช้
-  const get=(o,keys)=>{ for(const k of keys){ if(o&&o[k]!=null) return o[k]; } return undefined; };
-  // หา object ที่มีข้อมูลรางวัล
+  const get=(o,keys)=>{ if(!o) return undefined; for(const k of keys){ if(o[k]!=null) return o[k]; } return undefined; };
   const root = d.response||d.data||d;
   const data = root.data||root;
-  // วันที่
-  let dateStr = get(data,['displayDate','date_display']);
+  let dateStr = get(data,['displayDate','date_display','date_full','date']) || get(root,['displayDate','date_display','date']);
+  if(dateStr && /^\d{1,2}$/.test(String(dateStr).trim())){
+    // ถ้า date เป็นแค่ตัวเลขวัน ต้องประกอบกับ month/year
+    dateStr = null;
+  }
   if(!dateStr){
     const dd=get(data,['date']), mm=get(data,['month']), yy=get(data,['year']);
     if(dd&&mm&&yy){ const M=['','มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม']; dateStr=`${parseInt(dd,10)} ${M[parseInt(mm,10)]||mm} ${yy}`; }
   }
-  // รางวัล: GLO ใช้ key first/last2/last3f/last3b (อาจเป็น object {number:[...]} หรือ array ตรงๆ)
-  const pickNums=(v)=>{ if(!v) return []; if(Array.isArray(v)) return v.map(x=>typeof x==='object'?(x.value||x.number||''):String(x)); if(v.number) return Array.isArray(v.number)?v.number:[v.number]; if(v.value) return [v.value]; return [String(v)]; };
-  const P = data.prizes||data;
-  const first = (pickNums(get(P,['first','prizeFirst']))[0])||'';
-  const last2 = (pickNums(get(P,['last2','runningNumberBackTwo']))[0])||'';
-  const f3 = pickNums(get(P,['last3f','runningNumberFrontThree']));
-  const b3 = pickNums(get(P,['last3b','runningNumberBackThree']));
-  return { date: dateStr?parseApiDate(dateStr):'', first, front3:[f3[0]||'',f3[1]||''], back3:[b3[0]||'',b3[1]||''], back2:last2 };
+  // ดึงเลขจากหลายรูปแบบ: array, {number:[]}, {value:''}, string, หรือ array ของ object
+  const pickNums=(v)=>{
+    if(v==null) return [];
+    if(Array.isArray(v)) return v.flatMap(x=>pickNums(x));
+    if(typeof v==='object') return pickNums(v.number!=null?v.number:(v.value!=null?v.value:''));
+    const s=String(v).trim(); return s?[s]:[];
+  };
+  // prizes อาจเป็น object {first:..,last2:..} หรือ array [{id,number}]
+  let P = data.prizes||data;
+  const findById=(id)=>{ if(Array.isArray(P)){ const o=P.find(x=>x&&(x.id===id||x.name===id)); return o?(o.number||o.value):undefined; } return undefined; };
+  const grab=(objKeys, arrIds)=>{
+    let v=get(P,objKeys); if(v!=null) return pickNums(v);
+    for(const id of arrIds){ const a=findById(id); if(a!=null) return pickNums(a); }
+    return [];
+  };
+  const first=(grab(['first','prizeFirst','firstPrize'],['prizeFirst','first'])[0])||'';
+  const last2=(grab(['last2','runningNumberBackTwo','bottom2'],['runningNumberBackTwo','last2'])[0])||'';
+  const f3=grab(['last3f','runningNumberFrontThree','front3'],['runningNumberFrontThree','last3f']);
+  const b3=grab(['last3b','runningNumberBackThree','back3'],['runningNumberBackThree','last3b']);
+  return { date: dateStr?parseApiDate(dateStr):'', first, front3:[f3[0]||'',f3[1]||''], back3:[b3[0]||'',b3[1]||''], back2:last2,
+           _debug:{ hasDate:!!dateStr, hasFirst:!!first, keys:Object.keys(data||{}).slice(0,12) } };
 }
 function shouldAutoFetch(){
   const now=new Date(),d=now.getDate(),h=now.getHours();
@@ -1137,7 +1151,10 @@ async function updateFromAPI(){
   const resp=await fetchLatest();
   if(!resp) return {ok:false, reason:'เรียก API ไม่ได้ (อาจยังไม่ได้ deploy api/lotto.js หรือเน็ตล่ม) — กรอกเองด้านล่างได้'};
   let draw; try{ draw=gloToDraw(resp); }catch(e){ return {ok:false, reason:'อ่านข้อมูล API ไม่สำเร็จ'}; }
-  if(!draw.date||!draw.first) return {ok:false, reason:'ข้อมูลจาก API ไม่ครบ'};
+  if(!draw.date||!draw.first){
+    const dbg=draw._debug?` [keys ที่เจอ: ${(draw._debug.keys||[]).join(', ')||'ไม่มี'}]`:'';
+    return {ok:false, reason:'ข้อมูลจาก API ไม่ครบ'+dbg};
+  }
   try{ localStorage.setItem(FETCH_MARK, new Date().toISOString()); }catch(e){}
   if(DATA.some(d=>d.date===draw.date)) return {ok:true, added:false, draw, reason:'งวดล่าสุดยังไม่อัปเดตในระบบ (API ยังเป็นงวดเดิม)'};
   DATA.unshift(draw); await saveData(); refresh();
