@@ -1151,10 +1151,12 @@ async function updateFromAPI(){
   const resp=await fetchLatest();
   if(!resp) return {ok:false, reason:'เรียก API ไม่ได้ (อาจยังไม่ได้ deploy api/lotto.js หรือเน็ตล่ม) — กรอกเองด้านล่างได้'};
   let draw; try{ draw=gloToDraw(resp); }catch(e){ return {ok:false, reason:'อ่านข้อมูล API ไม่สำเร็จ'}; }
-  if(!draw.date||!draw.first){
+  if(!draw.date||!draw.first||!isValidDraw(draw)){
     const dbg=draw._debug?` [keys ที่เจอ: ${(draw._debug.keys||[]).join(', ')||'ไม่มี'}]`:'';
     return {ok:false, reason:'ข้อมูลจาก API ไม่ครบ'+dbg};
   }
+  // ตัด _debug ออกก่อนเก็บ
+  draw={date:draw.date,first:draw.first,front3:draw.front3,back3:draw.back3,back2:draw.back2};
   try{ localStorage.setItem(FETCH_MARK, new Date().toISOString()); }catch(e){}
   if(DATA.some(d=>d.date===draw.date)) return {ok:true, added:false, draw, reason:'งวดล่าสุดยังไม่อัปเดตในระบบ (API ยังเป็นงวดเดิม)'};
   DATA.unshift(draw); await saveData(); refresh();
@@ -1181,10 +1183,38 @@ async function autoUpdateOnLoad(){
   else if(r.ok&&!r.added) showUpdateMsg('ℹ️ '+r.reason,'var(--gold)');
 }
 
+/* ตรวจว่า draw หนึ่งตัวถูกต้องไหม — กัน [object Object] / ข้อมูลเสีย */
+function isValidDraw(d){
+  if(!d || typeof d!=='object') return false;
+  if(typeof d.date!=='string' || !d.date.trim()) return false;
+  if(d.date.includes('[object')) return false; // กันเคส [object Object]
+  // date ต้องเป็นรูปแบบงวดไทย เช่น "16 มิ.ย. 69"
+  if(!/^\d{1,2}\s\S+\s\d{2}$/.test(d.date.trim())) return false;
+  if(typeof d.first!=='string' || !/^\d{6}$/.test(d.first)) return false;
+  return true;
+}
+/* ทำความสะอาด + รวมกับ SEED (ให้ SEED ที่แก้แล้วมาก่อน ถ้า date ซ้ำ) */
+function sanitizeDraws(arr){
+  const clean=(arr||[]).filter(isValidDraw).map(d=>({
+    date:String(d.date), first:String(d.first),
+    front3:Array.isArray(d.front3)?[d.front3[0]||'',d.front3[1]||'']:['',''],
+    back3:Array.isArray(d.back3)?[d.back3[0]||'',d.back3[1]||'']:['',''],
+    back2:d.back2?String(d.back2):''
+  }));
+  // รวมกับ SEED: ใช้ SEED เป็นฐาน (ข้อมูลแก้ล่าสุด) แล้วเติมงวดที่ผู้ใช้เพิ่มซึ่งไม่มีใน SEED
+  const seedDates=new Set(SEED_FULL.map(d=>d.date));
+  const extra=clean.filter(d=>!seedDates.has(d.date));
+  return [...extra, ...SEED_FULL]; // งวดใหม่ที่ผู้ใช้เพิ่ม อยู่บนสุด
+}
 async function loadData(){
-  // ลอง localStorage ก่อน (ใช้ได้บน Vercel) แล้วค่อย window.storage (Claude artifact)
-  try{ const v=localStorage.getItem(STORE_KEY); if(v){ const s=JSON.parse(v); if(Array.isArray(s)&&s.length){DATA=s; return;} } }catch(e){}
-  try{ const r=await window.storage.get(STORE_KEY); if(r&&r.value){ const s=JSON.parse(r.value); if(Array.isArray(s)&&s.length) DATA=s; } }catch(e){}
+  let stored=null;
+  try{ const v=localStorage.getItem(STORE_KEY); if(v){ const s=JSON.parse(v); if(Array.isArray(s)) stored=s; } }catch(e){}
+  if(!stored){ try{ const r=await window.storage.get(STORE_KEY); if(r&&r.value){ const s=JSON.parse(r.value); if(Array.isArray(s)) stored=s; } }catch(e){} }
+  if(stored){
+    DATA=sanitizeDraws(stored);
+    // ถ้าหลังกรองได้ข้อมูลต่างจากที่เก็บ (มีของเสีย) เซฟทับให้สะอาด
+    await saveData();
+  }
 }
 async function saveData(){
   let ok=false;
