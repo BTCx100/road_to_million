@@ -1111,22 +1111,27 @@ async function checkTicket(){
   const draw=DATA.find(d=>d.date===date);
   if(!draw){ box.innerHTML='<div class="ck-msg ck-bad">⚠️ ไม่พบงวดนี้ในระบบ</div>'; return; }
 
-  // ลองตรวจผ่าน API (ครบทุกรางวัล 1-5 + ข้างเคียง) ก่อน
-  box.innerHTML='<div class="ck-msg" style="color:var(--txt-dim)">⟳ กำลังตรวจกับ API ทางการ (ครบทุกรางวัล)...</div>';
-  const iso=thaiDateToISO(date);
-  let apiHits=null;
+  // ถ้างวดนี้มี extra (รางวัล 2-5) อยู่แล้ว ตรวจ local ได้เลยครบทุกรางวัล
+  if(draw.extra){ renderCheckResult(box, checkLocal(ticket, draw), draw); return; }
+
+  // ถ้าไม่มี extra — ลองดึงผลเต็มของงวดนั้นจาก API (byDate) เพื่อตรวจครบ 5 รางวัล
+  box.innerHTML='<div class="ck-msg" style="color:var(--txt-dim)">⟳ กำลังดึงผลครบทุกรางวัลจาก API ทางการ...</div>';
+  const iso=thaiDateToISO(date); // "2026-06-01"
+  let fullDraw=null;
   if(iso){
+    const [yy,mm,dd]=iso.split('-');
     try{
       const ctrl=new AbortController(); const to=setTimeout(()=>ctrl.abort(),8000);
-      const r=await fetch('/api/lotto?action=check',{method:'POST',headers:{'Content-Type':'application/json'},signal:ctrl.signal,body:JSON.stringify({numbers:[ticket],period_date:iso})});
+      const r=await fetch(`/api/lotto?action=byDate&date=${dd}&month=${mm}&year=${yy}`,{signal:ctrl.signal});
       clearTimeout(to);
-      if(r.ok){ const j=await r.json(); if(j.ok&&j.data){ apiHits=parseApiCheckResult(j.data, ticket); } }
+      if(r.ok){ const j=await r.json(); if(j.ok&&j.data){ const gd=gloToDraw(j.data); if(gd.extra) fullDraw={...draw, extra:gd.extra}; } }
     }catch(e){}
   }
-  if(apiHits!==null){ renderCheckResult(box, apiHits, draw); return; }
-  // fallback: ตรวจ local (4 รางวัลหลัก + extra ถ้ามี)
-  const hits=checkLocal(ticket, draw);
-  renderCheckResult(box, hits, draw);
+  // ตรวจด้วยข้อมูลเต็ม (ถ้าดึงได้) หรือ local 4 รางวัล (ถ้าดึงไม่ได้)
+  renderCheckResult(box, checkLocal(ticket, fullDraw||draw), fullDraw||draw);
+  if(!fullDraw){
+    box.innerHTML += '<div class="ck-note" style="margin-top:10px;color:var(--txt-dim)">หมายเหตุ: ตรวจได้ 4 รางวัลหลักจากข้อมูลในระบบ — รางวัลที่ 2-5 ต้องดึงจาก API (กดดึงผลงวดล่าสุด หรือดูที่ไทยรัฐ)</div>';
+  }
 }
 /* แปลงผลตรวจจาก GLO getcheckLotteryResult -> hits[] */
 function parseApiCheckResult(data, ticket){
@@ -1196,30 +1201,32 @@ function gloGet(root, keys){
 }
 function gloToDraw(d){
   const root = d.response||d.data||d;
-  // วันที่: displayDate ("1 มิถุนายน 2569") เป็นหลัก
-  let dateStr = gloDeepFind(root,'displayDate',0);
-  if(typeof dateStr==='object') dateStr=null; // ถ้าไม่ใช่ string ทิ้ง
-  // ตรวจว่า displayDate ใช้ได้ไหม (ต้องมีรูปแบบ "เลข เดือนไทย เลข")
-  if(dateStr && !/\d+\s+[ก-๙]+\s+\d+/.test(String(dateStr))) dateStr=null;
-  if(!dateStr){
-    // ประกอบจาก date(วัน)/month/year — ระวัง GLO อาจใช้ key ซ้อน
-    let dd=gloDeepFind(root,'date',0), mm=gloDeepFind(root,'month',0), yy=gloDeepFind(root,'year',0);
-    // ถ้า dd เป็นปี (>31) แสดงว่าหยิบผิด — ลองหา field วันอื่น
-    dd=parseInt(dd,10); mm=parseInt(mm,10); yy=parseInt(yy,10);
-    if(dd>31){ const alt=gloDeepFind(root,'day',0); if(alt) dd=parseInt(alt,10); }
-    if(dd>=1&&dd<=31&&mm>=1&&mm<=12&&yy){ const M=['','มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม']; dateStr=`${dd} ${M[mm]} ${yy}`; }
+  const D = root.data||{}; // ข้อมูลรางวัลอยู่ใน response.data
+  // ดึงค่า value จากโครงสร้างจริง: {price, number:[{round, value}]}
+  const vals=(prize)=>{
+    const o=D[prize]; if(!o||!Array.isArray(o.number)) return [];
+    return o.number.map(x=>x&&x.value!=null?String(x.value):'').filter(Boolean);
+  };
+  // วันที่: ใช้ response.date (ISO "2026-06-01") เป็นหลัก แม่นสุด
+  let dateStr='';
+  const iso=root.date; // "2026-06-01"
+  if(iso && /^\d{4}-\d{2}-\d{2}$/.test(String(iso))){
+    const [y,m,dd]=String(iso).split('-').map(n=>parseInt(n,10));
+    const M=['','มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
+    dateStr=`${dd} ${M[m]} ${y}`; // ส่ง ค.ศ. ให้ parseApiDate แปลงเป็น พ.ศ. เอง
+  } else if(root.displayDate && typeof root.displayDate==='object'){
+    const dp=root.displayDate, M=['','มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
+    dateStr=`${parseInt(dp.date,10)} ${M[parseInt(dp.month,10)]} ${dp.year}`;
   }
-  const first=(gloGet(root,['first'])[0])||'';
-  const last2=(gloGet(root,['last2'])[0])||'';
-  const f3=gloGet(root,['last3f']);
-  const b3=gloGet(root,['last3b']);
-  // รางวัล 2-5 + ข้างเคียง (เก็บเป็น array ไว้ตรวจ)
-  const second=gloGet(root,['second']), third=gloGet(root,['third']), fourth=gloGet(root,['fourth']), fifth=gloGet(root,['fifth']), near1=gloGet(root,['near1']);
+  const first=vals('first')[0]||'';
+  const last2=vals('last2')[0]||'';
+  const f3=vals('last3f');
+  const b3=vals('last3b');
   return {
-    date: dateStr?parseApiDate(String(dateStr)):'',
+    date: dateStr?parseApiDate(dateStr):'',
     first, front3:[f3[0]||'',f3[1]||''], back3:[b3[0]||'',b3[1]||''], back2:last2,
-    extra:{ second, third, fourth, fifth, near1 },
-    _debug:{ hasDate:!!dateStr, hasFirst:!!first, dateRaw:dateStr, rawKeys:Object.keys(root||{}).slice(0,15).join(',') }
+    extra:{ second:vals('second'), third:vals('third'), fourth:vals('fourth'), fifth:vals('fifth'), near1:vals('near1') },
+    _debug:{ hasDate:!!dateStr, hasFirst:!!first, dateRaw:dateStr }
   };
 }
 function shouldAutoFetch(){
