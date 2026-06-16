@@ -1161,10 +1161,14 @@ const PROXY_LATEST='/api/lotto?action=latest';
 const GLO_DIRECT='https://www.glo.or.th/api/lottery/getLatestLottery';
 const FETCH_MARK='rtm:lastFetch';
 const TH_FULL={'มกราคม':'ม.ค.','กุมภาพันธ์':'ก.พ.','มีนาคม':'มี.ค.','เมษายน':'เม.ย.','พฤษภาคม':'พ.ค.','มิถุนายน':'มิ.ย.','กรกฎาคม':'ก.ค.','สิงหาคม':'ส.ค.','กันยายน':'ก.ย.','ตุลาคม':'ต.ค.','พฤศจิกายน':'พ.ย.','ธันวาคม':'ธ.ค.'};
-function parseApiDate(s){ // "1 มิถุนายน 2569" หรือ "01 มิถุนายน 2569" -> "1 มิ.ย. 69"
+function parseApiDate(s){ // "1 มิถุนายน 2569"(พ.ศ.) หรือ "1 มิถุนายน 2026"(ค.ศ.) -> "1 มิ.ย. 69"
   const p=String(s).trim().split(/\s+/); if(p.length<3) return String(s);
+  const dd=parseInt(p[0],10);
   const short=TH_FULL[p[1]]||p[1];
-  return `${parseInt(p[0],10)} ${short} ${String(Number(p[2])%100).padStart(2,'0')}`;
+  let yr=parseInt(p[2],10);
+  if(yr<2500) yr+=543; // ถ้าเป็น ค.ศ. แปลงเป็น พ.ศ. ก่อน
+  if(!dd||dd>31) return String(s); // ถ้าวันผิดปกติ คืนเดิม (กันเคสเพี้ยน)
+  return `${dd} ${short} ${String(yr%100).padStart(2,'0')}`;
 }
 /* แปลง response GLO -> โครงสร้าง DATA ของเรา
    ใช้ deep-search หา key ทุกระดับชั้น เพื่อรองรับทุกโครงสร้างที่ GLO อาจส่งมา */
@@ -1192,12 +1196,18 @@ function gloGet(root, keys){
 }
 function gloToDraw(d){
   const root = d.response||d.data||d;
-  // วันที่: displayDate ("1 มิถุนายน 2569") หรือประกอบจาก date/month/year
+  // วันที่: displayDate ("1 มิถุนายน 2569") เป็นหลัก
   let dateStr = gloDeepFind(root,'displayDate',0);
-  if(typeof dateStr==='object') dateStr=gloPickNums(dateStr).join(' ')||null;
+  if(typeof dateStr==='object') dateStr=null; // ถ้าไม่ใช่ string ทิ้ง
+  // ตรวจว่า displayDate ใช้ได้ไหม (ต้องมีรูปแบบ "เลข เดือนไทย เลข")
+  if(dateStr && !/\d+\s+[ก-๙]+\s+\d+/.test(String(dateStr))) dateStr=null;
   if(!dateStr){
-    const dd=gloDeepFind(root,'date',0), mm=gloDeepFind(root,'month',0), yy=gloDeepFind(root,'year',0);
-    if(dd&&mm&&yy && /^\d/.test(String(dd))){ const M=['','มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม']; dateStr=`${parseInt(dd,10)} ${M[parseInt(mm,10)]||mm} ${yy}`; }
+    // ประกอบจาก date(วัน)/month/year — ระวัง GLO อาจใช้ key ซ้อน
+    let dd=gloDeepFind(root,'date',0), mm=gloDeepFind(root,'month',0), yy=gloDeepFind(root,'year',0);
+    // ถ้า dd เป็นปี (>31) แสดงว่าหยิบผิด — ลองหา field วันอื่น
+    dd=parseInt(dd,10); mm=parseInt(mm,10); yy=parseInt(yy,10);
+    if(dd>31){ const alt=gloDeepFind(root,'day',0); if(alt) dd=parseInt(alt,10); }
+    if(dd>=1&&dd<=31&&mm>=1&&mm<=12&&yy){ const M=['','มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม']; dateStr=`${dd} ${M[mm]} ${yy}`; }
   }
   const first=(gloGet(root,['first'])[0])||'';
   const last2=(gloGet(root,['last2'])[0])||'';
@@ -1209,7 +1219,7 @@ function gloToDraw(d){
     date: dateStr?parseApiDate(String(dateStr)):'',
     first, front3:[f3[0]||'',f3[1]||''], back3:[b3[0]||'',b3[1]||''], back2:last2,
     extra:{ second, third, fourth, fifth, near1 },
-    _debug:{ hasDate:!!dateStr, hasFirst:!!first, dateRaw:dateStr }
+    _debug:{ hasDate:!!dateStr, hasFirst:!!first, dateRaw:dateStr, rawKeys:Object.keys(root||{}).slice(0,15).join(',') }
   };
 }
 function shouldAutoFetch(){
@@ -1237,7 +1247,7 @@ async function updateFromAPI(){
   if(!resp) return {ok:false, reason:'เรียก API ไม่ได้ (อาจยังไม่ได้ deploy api/lotto.js หรือเน็ตล่ม) — กรอกเองด้านล่างได้'};
   let draw; try{ draw=gloToDraw(resp); }catch(e){ return {ok:false, reason:'อ่านข้อมูล API ไม่สำเร็จ'}; }
   if(!draw.date||!draw.first||!isValidDraw(draw)){
-    const dbg=draw._debug?` [debug: date=${draw._debug.dateRaw||'ไม่เจอ'}, first=${draw.first||'ไม่เจอ'}]`:'';
+    const dbg=draw._debug?` [debug: date=${draw._debug.dateRaw||'ไม่เจอ'}, first=${draw.first||'ไม่เจอ'}, keys=${draw._debug.rawKeys||'?'}]`:'';
     return {ok:false, reason:'ข้อมูลจาก API ไม่ครบ'+dbg};
   }
   // เก็บ extra (รางวัล 2-5) ไว้ด้วย เผื่อตรวจรางวัล
