@@ -190,6 +190,14 @@
   .ck-lose-h{font-family:'Bai Jamjuree',sans-serif;font-size:1.05rem;color:#ff8aa0;font-weight:700;margin-bottom:8px}
   .ck-detail{font-size:.88rem;color:var(--txt-dim);line-height:1.7}
   .ck-detail b{color:var(--gold);font-family:'Bai Jamjuree',sans-serif;letter-spacing:.04em}
+  .latest-card{margin-top:14px;background:linear-gradient(160deg,rgba(45,212,191,.1),var(--navy));border:1px solid rgba(45,212,191,.4);border-radius:14px;padding:16px 18px}
+  .lc-head{font-size:.95rem;color:var(--txt);margin-bottom:12px}
+  .lc-head b{color:var(--teal);font-family:'Bai Jamjuree',sans-serif;font-size:1.1rem}
+  .lc-note{font-size:.78rem;color:var(--txt-dim);margin-left:6px}
+  .lc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+  .lc-cell{background:rgba(0,0,0,.25);border:1px solid var(--line);border-radius:10px;padding:10px 12px;text-align:center}
+  .lc-label{font-size:.75rem;color:var(--txt-dim);margin-bottom:5px}
+  .lc-val{font-family:'Bai Jamjuree',sans-serif;font-weight:700;color:var(--gold);font-size:1.2rem;letter-spacing:.06em}
   .visitor{display:inline-flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);
     border-radius:999px;padding:8px 18px;margin:0 auto 18px;font-size:.85rem;color:var(--txt-dim)}
   .visitor .v-num{font-family:'Bai Jamjuree',sans-serif;font-weight:700;color:var(--gold);font-size:1.1rem;letter-spacing:.04em}
@@ -324,17 +332,19 @@
   <!-- ADD -->
   <section>
     <div class="sec-head"><h2>อัพเดตงวดใหม่</h2><span class="tag tag-sci">ออโต้ + แมนนวล</span></div>
-    <p class="sec-desc">ระบบดึงผลงวดล่าสุดอัตโนมัติ (เฉพาะวันหวยออกหลัง 17:00 น. ดึงวันละครั้ง ไม่ถี่) หรือกดดึงเอง — สถิติจะรวมงวดใหม่เข้าคำนวณทุกครั้ง</p>
+    <p class="sec-desc">ระบบดึงผลงวดล่าสุดอัตโนมัติ (เฉพาะวันหวยออกหลัง 17:00 น. ดึงวันละครั้ง ไม่ถี่) หรือกดดึงเอง — งวดใหม่จะเข้าสถิติและตารางย้อนหลังให้ทันที</p>
     <div class="addbox" style="margin-bottom:16px">
-      <div class="addbox-h">🔄 ดึงผลอัตโนมัติจากอินเทอร์เน็ต</div>
+      <div class="addbox-h">🔄 ดึงผลอัตโนมัติจากอินเทอร์เน็ต (API ทางการ GLO)</div>
       <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
         <button class="btn-gold" onclick="manualFetchLatest()" id="fetchBtn">🔄 ดึงผลงวดล่าสุดจากอินเทอร์เน็ต</button>
-        <span style="font-size:.82rem;color:var(--txt-dim)">ดึงจาก API ทางการ สำนักงานสลากฯ (GLO)</span>
+        <span style="font-size:.82rem;color:var(--txt-dim)">สำนักงานสลากกินแบ่งรัฐบาล</span>
       </div>
       <div id="autoUpdMsg" class="addmsg"></div>
+      <div id="autoUpdResult"></div>
     </div>
-    <div class="addbox">
-      <div class="addbox-h">＋ เพิ่มผลรางวัลงวดใหม่ (กรอกเอง)</div>
+    <details class="addbox" style="cursor:pointer">
+      <summary style="font-weight:600;color:var(--gold);font-size:1rem">＋ เพิ่มผลรางวัลเอง (สำรอง — ใช้เมื่อ API ล่ม)</summary>
+      <div style="margin-top:14px">
       <div class="addfields">
         <div class="field"><label>ชื่องวด</label><input id="nvDate" type="text" placeholder="16 มิ.ย. 69" maxlength="20"></div>
         <div class="field"><label>รางวัลที่ 1 (6 หลัก)</label><input id="nvFirst" class="mono" inputmode="numeric" placeholder="123456" maxlength="6"></div>
@@ -348,7 +358,8 @@
         <div class="field addactions"><label>&nbsp;</label><button class="btn-gold" onclick="addDraw()">＋ เพิ่ม</button></div>
       </div>
       <div id="addMsg" class="addmsg"></div>
-    </div>
+      </div>
+    </details>
     <div style="margin-top:14px"><button class="btn-ghost" onclick="resetDraws()">↩ รีเซ็ตข้อมูลกลับค่าตั้งต้น (10 ปี)</button></div>
   </section>
 
@@ -1049,19 +1060,35 @@ function renderCheckDraws(){
   const sel=document.getElementById('ckDraw'); if(!sel) return;
   sel.innerHTML=DATA.filter(d=>d.first).map(d=>`<option value="${d.date}">${d.date}</option>`).join('');
 }
-function checkTicket(){
-  const ticket=document.getElementById('ckTicket').value.trim();
-  const date=document.getElementById('ckDraw').value;
-  const box=document.getElementById('ckResult');
-  if(!/^\d{6}$/.test(ticket)){ box.innerHTML='<div class="ck-msg ck-bad">⚠️ กรุณากรอกเลขสลาก 6 หลัก</div>'; return; }
-  const draw=DATA.find(d=>d.date===date);
-  if(!draw){ box.innerHTML='<div class="ck-msg ck-bad">⚠️ ไม่พบงวดนี้ในระบบ</div>'; return; }
+/* แปลงงวดไทย "1 มิ.ย. 69" -> ISO "2026-06-01" สำหรับส่ง API */
+const TH_SHORT_REV={'ม.ค.':1,'ก.พ.':2,'มี.ค.':3,'เม.ย.':4,'พ.ค.':5,'มิ.ย.':6,'ก.ค.':7,'ส.ค.':8,'ก.ย.':9,'ต.ค.':10,'พ.ย.':11,'ธ.ค.':12};
+function thaiDateToISO(thai){
+  const p=String(thai).trim().split(/\s+/); if(p.length<3) return null;
+  const dd=parseInt(p[0],10), mm=TH_SHORT_REV[p[1]], yyBE=parseInt(p[2],10);
+  if(!dd||!mm||isNaN(yyBE)) return null;
+  const yearBE = yyBE<100 ? 2500+yyBE : yyBE; // 69 -> 2569
+  const yearAD = yearBE-543;
+  return `${yearAD}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')}`;
+}
+/* ตรวจ local (4 รางวัลหลัก) */
+function checkLocal(ticket, draw){
   const last2=ticket.slice(-2), last3=ticket.slice(-3), first3=ticket.slice(0,3);
   const hits=[];
   if(ticket===draw.first) hits.push({p:'รางวัลที่ 1',r:'6,000,000',m:ticket});
   if(draw.back2 && last2===draw.back2) hits.push({p:'เลขท้าย 2 ตัว',r:'2,000',m:last2});
   (draw.back3||[]).forEach(b=>{ if(b&&last3===b) hits.push({p:'เลขท้าย 3 ตัว',r:'4,000',m:last3}); });
   (draw.front3||[]).forEach(f=>{ if(f&&first3===f) hits.push({p:'เลขหน้า 3 ตัว',r:'4,000',m:first3}); });
+  // ตรวจรางวัล 2-5 + ข้างเคียง จาก extra (ถ้ามี จาก API)
+  if(draw.extra){
+    const E=draw.extra, rw={second:'200,000',third:'80,000',fourth:'40,000',fifth:'20,000',near1:'100,000'};
+    const nm={second:'รางวัลที่ 2',third:'รางวัลที่ 3',fourth:'รางวัลที่ 4',fifth:'รางวัลที่ 5',near1:'ข้างเคียงรางวัลที่ 1'};
+    for(const k of ['second','third','fourth','fifth','near1']){
+      (E[k]||[]).forEach(n=>{ if(n&&ticket===n) hits.push({p:nm[k],r:rw[k],m:ticket}); });
+    }
+  }
+  return hits;
+}
+function renderCheckResult(box, hits, draw){
   if(hits.length){
     const total=hits.reduce((s,h)=>s+parseInt(h.r.replace(/,/g,'')),0);
     box.innerHTML=`<div class="ck-win">
@@ -1073,9 +1100,58 @@ function checkTicket(){
     box.innerHTML=`<div class="ck-lose">
       <div class="ck-lose-h">😢 เสียใจด้วย ไม่ถูกรางวัลในงวดนี้</div>
       <div class="ck-detail">งวด ${draw.date}: ร.1 <b>${draw.first}</b> · ท้าย2 <b>${draw.back2||'—'}</b> · ท้าย3 <b>${(draw.back3||[]).filter(x=>x).join(', ')||'—'}</b> · หน้า3 <b>${(draw.front3||[]).filter(x=>x).join(', ')||'—'}</b></div>
-      <div class="ck-note" style="margin-top:8px">หมายเหตุ: ตรวจ 4 รางวัลหลัก — รางวัลที่ 2-5 และข้างเคียง ดูที่เว็บไทยรัฐด้านล่าง</div>
     </div>`;
   }
+}
+async function checkTicket(){
+  const ticket=document.getElementById('ckTicket').value.trim();
+  const date=document.getElementById('ckDraw').value;
+  const box=document.getElementById('ckResult');
+  if(!/^\d{6}$/.test(ticket)){ box.innerHTML='<div class="ck-msg ck-bad">⚠️ กรุณากรอกเลขสลาก 6 หลัก</div>'; return; }
+  const draw=DATA.find(d=>d.date===date);
+  if(!draw){ box.innerHTML='<div class="ck-msg ck-bad">⚠️ ไม่พบงวดนี้ในระบบ</div>'; return; }
+
+  // ลองตรวจผ่าน API (ครบทุกรางวัล 1-5 + ข้างเคียง) ก่อน
+  box.innerHTML='<div class="ck-msg" style="color:var(--txt-dim)">⟳ กำลังตรวจกับ API ทางการ (ครบทุกรางวัล)...</div>';
+  const iso=thaiDateToISO(date);
+  let apiHits=null;
+  if(iso){
+    try{
+      const ctrl=new AbortController(); const to=setTimeout(()=>ctrl.abort(),8000);
+      const r=await fetch('/api/lotto?action=check',{method:'POST',headers:{'Content-Type':'application/json'},signal:ctrl.signal,body:JSON.stringify({numbers:[ticket],period_date:iso})});
+      clearTimeout(to);
+      if(r.ok){ const j=await r.json(); if(j.ok&&j.data){ apiHits=parseApiCheckResult(j.data, ticket); } }
+    }catch(e){}
+  }
+  if(apiHits!==null){ renderCheckResult(box, apiHits, draw); return; }
+  // fallback: ตรวจ local (4 รางวัลหลัก + extra ถ้ามี)
+  const hits=checkLocal(ticket, draw);
+  renderCheckResult(box, hits, draw);
+}
+/* แปลงผลตรวจจาก GLO getcheckLotteryResult -> hits[] */
+function parseApiCheckResult(data, ticket){
+  // GLO คืนผลว่าเลขถูกรางวัลอะไรบ้าง — โครงสร้างอาจต่าง ใช้ deep search หา prize ที่ match
+  const hits=[];
+  const rw={'first':'6,000,000','second':'200,000','third':'80,000','fourth':'40,000','fifth':'20,000','last2':'2,000','last3f':'4,000','last3b':'4,000','near1':'100,000'};
+  const nm={'first':'รางวัลที่ 1','second':'รางวัลที่ 2','third':'รางวัลที่ 3','fourth':'รางวัลที่ 4','fifth':'รางวัลที่ 5','last2':'เลขท้าย 2 ตัว','last3f':'เลขหน้า 3 ตัว','last3b':'เลขท้าย 3 ตัว','near1':'ข้างเคียงรางวัลที่ 1'};
+  // GLO อาจคืน {response:[{prize_name, reward, ...}]} หรือบอกว่าถูกรางวัลไหน
+  const root=data.response||data.data||data;
+  // ลองหา array ผลลัพธ์
+  const findResults=(o,depth)=>{
+    if(!o||depth>5) return;
+    if(Array.isArray(o)){ o.forEach(x=>findResults(x,depth+1)); return; }
+    if(typeof o==='object'){
+      // ถ้า object มี field บอกว่าถูกรางวัล
+      const status=o.status||o.is_win||o.win||o.prize||o.prize_name;
+      if(status && (o.lottery_num===ticket||o.number===ticket||!o.lottery_num)){
+        const pname=o.prize_name||o.prize||o.name;
+        if(pname){ hits.push({p:String(pname),r:o.reward?String(o.reward):'—',m:ticket}); }
+      }
+      for(const k in o) findResults(o[k],depth+1);
+    }
+  };
+  findResults(root,0);
+  return hits;
 }
 
 /* ===== ออโต้อัปเดตงวดใหม่จาก API ทางการ GLO (ผ่าน /api/lotto proxy) ===== */
@@ -1091,41 +1167,50 @@ function parseApiDate(s){ // "1 มิถุนายน 2569" หรือ "01 
   return `${parseInt(p[0],10)} ${short} ${String(Number(p[2])%100).padStart(2,'0')}`;
 }
 /* แปลง response GLO -> โครงสร้าง DATA ของเรา
-   GLO อาจส่งหลายรูปแบบ — รองรับทั้ง prizes เป็น object หรือ array, number เป็น array/string */
+   ใช้ deep-search หา key ทุกระดับชั้น เพื่อรองรับทุกโครงสร้างที่ GLO อาจส่งมา */
+function gloDeepFind(obj, targetKey, depth){
+  // คืนค่าแรกที่เจอ key = targetKey (ค้นลึกทุกชั้น)
+  if(obj==null || depth>6) return undefined;
+  if(typeof obj==='object' && !Array.isArray(obj)){
+    if(obj[targetKey]!=null) return obj[targetKey];
+    for(const k in obj){ const r=gloDeepFind(obj[k],targetKey,depth+1); if(r!=null) return r; }
+  } else if(Array.isArray(obj)){
+    for(const it of obj){ const r=gloDeepFind(it,targetKey,depth+1); if(r!=null) return r; }
+  }
+  return undefined;
+}
+function gloPickNums(v){
+  // ดึงเลขออกจากค่าได้ทุกรูปแบบ: "12", ["12","34"], {number:[...]}, {value:".."}, [{value:".."}]
+  if(v==null) return [];
+  if(Array.isArray(v)) return v.flatMap(x=>gloPickNums(x));
+  if(typeof v==='object') return gloPickNums(v.number!=null?v.number:(v.value!=null?v.value:(v.prize!=null?v.prize:'')));
+  const s=String(v).trim().replace(/[^\d]/g,''); return s?[s]:[];
+}
+function gloGet(root, keys){
+  for(const k of keys){ const v=gloDeepFind(root,k,0); if(v!=null){ const nums=gloPickNums(v); if(nums.length) return nums; } }
+  return [];
+}
 function gloToDraw(d){
-  const get=(o,keys)=>{ if(!o) return undefined; for(const k of keys){ if(o[k]!=null) return o[k]; } return undefined; };
   const root = d.response||d.data||d;
-  const data = root.data||root;
-  let dateStr = get(data,['displayDate','date_display','date_full','date']) || get(root,['displayDate','date_display','date']);
-  if(dateStr && /^\d{1,2}$/.test(String(dateStr).trim())){
-    // ถ้า date เป็นแค่ตัวเลขวัน ต้องประกอบกับ month/year
-    dateStr = null;
-  }
+  // วันที่: displayDate ("1 มิถุนายน 2569") หรือประกอบจาก date/month/year
+  let dateStr = gloDeepFind(root,'displayDate',0);
+  if(typeof dateStr==='object') dateStr=gloPickNums(dateStr).join(' ')||null;
   if(!dateStr){
-    const dd=get(data,['date']), mm=get(data,['month']), yy=get(data,['year']);
-    if(dd&&mm&&yy){ const M=['','มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม']; dateStr=`${parseInt(dd,10)} ${M[parseInt(mm,10)]||mm} ${yy}`; }
+    const dd=gloDeepFind(root,'date',0), mm=gloDeepFind(root,'month',0), yy=gloDeepFind(root,'year',0);
+    if(dd&&mm&&yy && /^\d/.test(String(dd))){ const M=['','มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม']; dateStr=`${parseInt(dd,10)} ${M[parseInt(mm,10)]||mm} ${yy}`; }
   }
-  // ดึงเลขจากหลายรูปแบบ: array, {number:[]}, {value:''}, string, หรือ array ของ object
-  const pickNums=(v)=>{
-    if(v==null) return [];
-    if(Array.isArray(v)) return v.flatMap(x=>pickNums(x));
-    if(typeof v==='object') return pickNums(v.number!=null?v.number:(v.value!=null?v.value:''));
-    const s=String(v).trim(); return s?[s]:[];
+  const first=(gloGet(root,['first'])[0])||'';
+  const last2=(gloGet(root,['last2'])[0])||'';
+  const f3=gloGet(root,['last3f']);
+  const b3=gloGet(root,['last3b']);
+  // รางวัล 2-5 + ข้างเคียง (เก็บเป็น array ไว้ตรวจ)
+  const second=gloGet(root,['second']), third=gloGet(root,['third']), fourth=gloGet(root,['fourth']), fifth=gloGet(root,['fifth']), near1=gloGet(root,['near1']);
+  return {
+    date: dateStr?parseApiDate(String(dateStr)):'',
+    first, front3:[f3[0]||'',f3[1]||''], back3:[b3[0]||'',b3[1]||''], back2:last2,
+    extra:{ second, third, fourth, fifth, near1 },
+    _debug:{ hasDate:!!dateStr, hasFirst:!!first, dateRaw:dateStr }
   };
-  // prizes อาจเป็น object {first:..,last2:..} หรือ array [{id,number}]
-  let P = data.prizes||data;
-  const findById=(id)=>{ if(Array.isArray(P)){ const o=P.find(x=>x&&(x.id===id||x.name===id)); return o?(o.number||o.value):undefined; } return undefined; };
-  const grab=(objKeys, arrIds)=>{
-    let v=get(P,objKeys); if(v!=null) return pickNums(v);
-    for(const id of arrIds){ const a=findById(id); if(a!=null) return pickNums(a); }
-    return [];
-  };
-  const first=(grab(['first','prizeFirst','firstPrize'],['prizeFirst','first'])[0])||'';
-  const last2=(grab(['last2','runningNumberBackTwo','bottom2'],['runningNumberBackTwo','last2'])[0])||'';
-  const f3=grab(['last3f','runningNumberFrontThree','front3'],['runningNumberFrontThree','last3f']);
-  const b3=grab(['last3b','runningNumberBackThree','back3'],['runningNumberBackThree','last3b']);
-  return { date: dateStr?parseApiDate(dateStr):'', first, front3:[f3[0]||'',f3[1]||''], back3:[b3[0]||'',b3[1]||''], back2:last2,
-           _debug:{ hasDate:!!dateStr, hasFirst:!!first, keys:Object.keys(data||{}).slice(0,12) } };
 }
 function shouldAutoFetch(){
   const now=new Date(),d=now.getDate(),h=now.getHours();
@@ -1152,19 +1237,34 @@ async function updateFromAPI(){
   if(!resp) return {ok:false, reason:'เรียก API ไม่ได้ (อาจยังไม่ได้ deploy api/lotto.js หรือเน็ตล่ม) — กรอกเองด้านล่างได้'};
   let draw; try{ draw=gloToDraw(resp); }catch(e){ return {ok:false, reason:'อ่านข้อมูล API ไม่สำเร็จ'}; }
   if(!draw.date||!draw.first||!isValidDraw(draw)){
-    const dbg=draw._debug?` [keys ที่เจอ: ${(draw._debug.keys||[]).join(', ')||'ไม่มี'}]`:'';
+    const dbg=draw._debug?` [debug: date=${draw._debug.dateRaw||'ไม่เจอ'}, first=${draw.first||'ไม่เจอ'}]`:'';
     return {ok:false, reason:'ข้อมูลจาก API ไม่ครบ'+dbg};
   }
-  // ตัด _debug ออกก่อนเก็บ
-  draw={date:draw.date,first:draw.first,front3:draw.front3,back3:draw.back3,back2:draw.back2};
+  // เก็บ extra (รางวัล 2-5) ไว้ด้วย เผื่อตรวจรางวัล
+  const clean={date:draw.date,first:draw.first,front3:draw.front3,back3:draw.back3,back2:draw.back2};
+  if(draw.extra) clean.extra=draw.extra;
   try{ localStorage.setItem(FETCH_MARK, new Date().toISOString()); }catch(e){}
-  if(DATA.some(d=>d.date===draw.date)) return {ok:true, added:false, draw, reason:'งวดล่าสุดยังไม่อัปเดตในระบบ (API ยังเป็นงวดเดิม)'};
-  DATA.unshift(draw); await saveData(); refresh();
-  return {ok:true, added:true, draw};
+  if(DATA.some(d=>d.date===clean.date)) return {ok:true, added:false, draw:clean, reason:'งวดล่าสุดยังไม่อัปเดตในระบบ (API ยังเป็นงวดเดิม)'};
+  DATA.unshift(clean); await saveData(); refresh();
+  return {ok:true, added:true, draw:clean};
 }
 function showUpdateMsg(text,color){
   const el=document.getElementById('autoUpdMsg'); if(!el) return;
-  el.textContent=text; el.style.color=color||'var(--txt-dim)';
+  el.innerHTML=`<span style="color:${color||'var(--txt-dim)'}">${text}</span>`;
+}
+/* แสดงการ์ดผลงวดล่าสุดใต้ปุ่ม (ตามที่ออกแบบ) */
+function showLatestCard(draw, note){
+  const el=document.getElementById('autoUpdResult'); if(!el) return;
+  const cell=(label,val)=>`<div class="lc-cell"><div class="lc-label">${label}</div><div class="lc-val">${val||'—'}</div></div>`;
+  el.innerHTML=`<div class="latest-card">
+    <div class="lc-head">📅 งวดล่าสุดที่ดึงได้: <b>${draw.date}</b> ${note?`<span class="lc-note">${note}</span>`:''}</div>
+    <div class="lc-grid">
+      ${cell('รางวัลที่ 1', draw.first)}
+      ${cell('เลขท้าย 2 ตัว', draw.back2)}
+      ${cell('เลขท้าย 3 ตัว', (draw.back3||[]).filter(x=>x).join(' '))}
+      ${cell('เลขหน้า 3 ตัว', (draw.front3||[]).filter(x=>x).join(' '))}
+    </div>
+  </div>`;
 }
 async function manualFetchLatest(){
   const btn=document.getElementById('fetchBtn');
@@ -1172,15 +1272,15 @@ async function manualFetchLatest(){
   showUpdateMsg('กำลังเชื่อมต่อ API ผลสลากฯ...','var(--txt-dim)');
   const r=await updateFromAPI();
   btn.disabled=false; btn.textContent='🔄 ดึงผลงวดล่าสุดจากอินเทอร์เน็ต';
-  if(r.ok&&r.added) showUpdateMsg(`✅ เพิ่มงวด ${r.draw.date} แล้ว (รางวัลที่1 ${r.draw.first}) — สถิติคำนวณใหม่แล้ว`,'var(--teal)');
-  else if(r.ok&&!r.added) showUpdateMsg('ℹ️ '+r.reason,'var(--gold)');
+  if(r.ok&&r.added){ showUpdateMsg(`✅ เพิ่มงวด ${r.draw.date} เข้าระบบแล้ว — สถิติและตารางย้อนหลังอัปเดตแล้ว`,'var(--teal)'); showLatestCard(r.draw,'(เพิ่มใหม่)'); }
+  else if(r.ok&&!r.added){ showUpdateMsg('ℹ️ '+r.reason,'var(--gold)'); showLatestCard(r.draw,'(มีอยู่แล้วในระบบ)'); }
   else showUpdateMsg('⚠️ '+r.reason,'var(--red)');
 }
 async function autoUpdateOnLoad(){
-  if(!shouldAutoFetch()) return; // ยังไม่ถึงเวลา/ดึงแล้ววันนี้ — เงียบ
+  if(!shouldAutoFetch()) return;
   const r=await updateFromAPI();
-  if(r.ok&&r.added) showUpdateMsg(`✅ อัปเดตงวด ${r.draw.date} อัตโนมัติแล้ว`,'var(--teal)');
-  else if(r.ok&&!r.added) showUpdateMsg('ℹ️ '+r.reason,'var(--gold)');
+  if(r.ok&&r.added){ showUpdateMsg(`✅ อัปเดตงวด ${r.draw.date} อัตโนมัติแล้ว`,'var(--teal)'); showLatestCard(r.draw,'(เพิ่มใหม่)'); }
+  else if(r.ok&&!r.added){ showLatestCard(r.draw,''); }
 }
 
 /* ตรวจว่า draw หนึ่งตัวถูกต้องไหม — กัน [object Object] / ข้อมูลเสีย */
