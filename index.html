@@ -1257,9 +1257,16 @@ function gloToDraw(d){
 }
 function shouldAutoFetch(){
   const now=new Date(),d=now.getDate(),h=now.getHours();
-  const drawDay=(d===1||d===2||d===16||d===17), afterTime=h>=17;
-  try{ const last=localStorage.getItem(FETCH_MARK); if(last && new Date(last).toDateString()===now.toDateString()) return false; }catch(e){}
-  return drawDay && afterTime;
+  // วันหวยออก (เผื่อเลื่อน 1-2 วัน) ตั้งแต่ 16:00 เป็นต้นไป
+  const drawDay=(d===1||d===2||d===3||d===16||d===17||d===18);
+  if(!drawDay || h<16) return false;
+  // เช็คว่ามีงวด "วันนี้" ใน DATA แล้วหรือยัง — ถ้ามีแล้ว ไม่ต้องดึง
+  const M=['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+  const todayLabel=`${d} ${M[now.getMonth()]} ${String((now.getFullYear()+543)%100).padStart(2,'0')}`;
+  if(DATA.some(x=>x.date===todayLabel)) return false; // ได้งวดวันนี้แล้ว
+  // throttle: ดึงซ้ำได้ทุก 20 นาที (ไม่ใช่วันละครั้ง) จนกว่าจะได้งวด
+  try{ const last=localStorage.getItem(FETCH_MARK); if(last && (Date.now()-new Date(last).getTime())<20*60*1000) return false; }catch(e){}
+  return true;
 }
 async function fetchLatest(){
   async function tryURL(url, opts){
@@ -1345,16 +1352,28 @@ function isValidDraw(d){
 }
 /* ทำความสะอาด + รวมกับ SEED (ให้ SEED ที่แก้แล้วมาก่อน ถ้า date ซ้ำ) */
 function sanitizeDraws(arr){
-  const clean=(arr||[]).filter(isValidDraw).map(d=>({
-    date:String(d.date), first:String(d.first),
-    front3:Array.isArray(d.front3)?[d.front3[0]||'',d.front3[1]||'']:['',''],
-    back3:Array.isArray(d.back3)?[d.back3[0]||'',d.back3[1]||'']:['',''],
-    back2:d.back2?String(d.back2):''
-  }));
-  // รวมกับ SEED: ใช้ SEED เป็นฐาน (ข้อมูลแก้ล่าสุด) แล้วเติมงวดที่ผู้ใช้เพิ่มซึ่งไม่มีใน SEED
+  const clean=(arr||[]).filter(isValidDraw).map(d=>{
+    const o={
+      date:String(d.date), first:String(d.first),
+      front3:Array.isArray(d.front3)?[d.front3[0]||'',d.front3[1]||'']:['',''],
+      back3:Array.isArray(d.back3)?[d.back3[0]||'',d.back3[1]||'']:['',''],
+      back2:d.back2?String(d.back2):''
+    };
+    if(d.extra && typeof d.extra==='object') o.extra=d.extra; // เก็บรางวัล 2-5 ไว้
+    return o;
+  });
+  // รวมกับ SEED: งวดที่ผู้ใช้/API เพิ่ม (ไม่อยู่ใน seed) อยู่บนสุด
+  // ถ้างวดซ้ำกับ seed แต่ stored มีข้อมูลครบกว่า (มี extra) ให้ใช้ stored แทน seed
+  const storedByDate=new Map(clean.map(d=>[d.date,d]));
   const seedDates=new Set(SEED_FULL.map(d=>d.date));
   const extra=clean.filter(d=>!seedDates.has(d.date));
-  return [...extra, ...SEED_FULL]; // งวดใหม่ที่ผู้ใช้เพิ่ม อยู่บนสุด
+  const merged=SEED_FULL.map(s=>{
+    const st=storedByDate.get(s.date);
+    // ถ้า stored มี extra หรือข้อมูลครบกว่า seed ใช้ stored
+    if(st && (st.extra || (st.front3[0]&&!s.front3[0]))) return st;
+    return s;
+  });
+  return [...extra, ...merged];
 }
 async function loadData(){
   let stored=null;
