@@ -1111,27 +1111,48 @@ async function checkTicket(){
   const draw=DATA.find(d=>d.date===date);
   if(!draw){ box.innerHTML='<div class="ck-msg ck-bad">⚠️ ไม่พบงวดนี้ในระบบ</div>'; return; }
 
-  // ถ้างวดนี้มี extra (รางวัล 2-5) อยู่แล้ว ตรวจ local ได้เลยครบทุกรางวัล
+  // ถ้างวดนี้มี extra (รางวัล 2-5) อยู่แล้ว ตรวจได้เลยครบทุกรางวัล
   if(draw.extra){ renderCheckResult(box, checkLocal(ticket, draw), draw); return; }
 
-  // ถ้าไม่มี extra — ลองดึงผลเต็มของงวดนั้นจาก API (byDate) เพื่อตรวจครบ 5 รางวัล
+  // ยังไม่มี extra — ดึงผลเต็มของงวดนั้นอัตโนมัติ (ผู้ใช้ไม่ต้องกดอะไรก่อน)
   box.innerHTML='<div class="ck-msg" style="color:var(--txt-dim)">⟳ กำลังดึงผลครบทุกรางวัลจาก API ทางการ...</div>';
-  const iso=thaiDateToISO(date); // "2026-06-01"
-  let fullDraw=null;
-  if(iso){
-    const [yy,mm,dd]=iso.split('-');
-    try{
-      const ctrl=new AbortController(); const to=setTimeout(()=>ctrl.abort(),8000);
-      const r=await fetch(`/api/lotto?action=byDate&date=${dd}&month=${mm}&year=${yy}`,{signal:ctrl.signal});
-      clearTimeout(to);
-      if(r.ok){ const j=await r.json(); if(j.ok&&j.data){ const gd=gloToDraw(j.data); if(gd.extra) fullDraw={...draw, extra:gd.extra}; } }
-    }catch(e){}
+  const fullExtra=await fetchFullDraw(date);
+  if(fullExtra){
+    // อัปเดตงวดใน DATA ให้มี extra (ครั้งหน้าไม่ต้องดึงซ้ำ) + เซฟถาวร
+    const idx=DATA.findIndex(d=>d.date===date);
+    if(idx>=0){ DATA[idx]={...DATA[idx], extra:fullExtra.extra, front3:fullExtra.front3||DATA[idx].front3, back3:fullExtra.back3||DATA[idx].back3, back2:fullExtra.back2||DATA[idx].back2}; await saveData(); refresh(); }
+    const updated=DATA.find(d=>d.date===date);
+    renderCheckResult(box, checkLocal(ticket, updated), updated);
+  }else{
+    // ดึงไม่ได้จริงๆ — ตรวจ 4 รางวัลหลักจากข้อมูลในระบบ
+    renderCheckResult(box, checkLocal(ticket, draw), draw);
+    box.innerHTML += '<div class="ck-note" style="margin-top:10px;color:var(--txt-dim)">หมายเหตุ: ตรวจได้ 4 รางวัลหลัก — รางวัลที่ 2-5 ต้องเชื่อมต่อ API (ลองใหม่ภายหลัง หรือดูที่ไทยรัฐ)</div>';
   }
-  // ตรวจด้วยข้อมูลเต็ม (ถ้าดึงได้) หรือ local 4 รางวัล (ถ้าดึงไม่ได้)
-  renderCheckResult(box, checkLocal(ticket, fullDraw||draw), fullDraw||draw);
-  if(!fullDraw){
-    box.innerHTML += '<div class="ck-note" style="margin-top:10px;color:var(--txt-dim)">หมายเหตุ: ตรวจได้ 4 รางวัลหลักจากข้อมูลในระบบ — รางวัลที่ 2-5 ต้องดึงจาก API (กดดึงผลงวดล่าสุด หรือดูที่ไทยรัฐ)</div>';
+}
+/* ดึงผลเต็มของงวด (byDate ก่อน ถ้าไม่ได้ลอง latest) คืน {extra, front3, back3, back2} หรือ null */
+async function fetchFullDraw(thaiDate){
+  const iso=thaiDateToISO(thaiDate); if(!iso) return null;
+  const [yy,mm,dd]=iso.split('-');
+  async function tryFetch(url, opts){
+    try{ const ctrl=new AbortController(); const to=setTimeout(()=>ctrl.abort(),8000);
+      const r=await fetch(url, Object.assign({signal:ctrl.signal},opts||{})); clearTimeout(to);
+      if(!r.ok) return null; const j=await r.json();
+      const data=(j&&j.ok&&j.data)?j.data:j; // proxy ห่อด้วย {ok,data} หรือตรงๆ
+      const gd=gloToDraw(data);
+      return (gd && gd.extra && (gd.extra.second?.length||gd.extra.fourth?.length))?gd:null;
+    }catch(e){ return null; }
   }
+  // 1) byDate (เจาะจงงวด)
+  let gd=await tryFetch(`/api/lotto?action=byDate&date=${dd}&month=${mm}&year=${yy}`);
+  // 2) ถ้าไม่ได้ ลอง latest (เผื่อเป็นงวดล่าสุด — รู้ว่า map ได้ชัวร์)
+  if(!gd) gd=await tryFetch('/api/lotto?action=latest');
+  // ตรวจว่า latest ตรงกับงวดที่ขอไหม (กันดึงผิดงวด)
+  if(gd && gd.date && gd.date!==thaiDate){
+    // latest เป็นคนละงวด — ใช้ได้เฉพาะ byDate เท่านั้น
+    const byOnly=await tryFetch(`/api/lotto?action=byDate&date=${dd}&month=${mm}&year=${yy}`);
+    gd = byOnly && byOnly.date===thaiDate ? byOnly : (gd.date===thaiDate?gd:null);
+  }
+  return gd;
 }
 /* แปลงผลตรวจจาก GLO getcheckLotteryResult -> hits[] */
 function parseApiCheckResult(data, ticket){
