@@ -1375,6 +1375,7 @@ function sanitizeDraws(arr){
   });
   return [...extra, ...merged];
 }
+const STORE_KEY='rtm:data:v4';
 async function loadData(){
   let stored=null;
   try{ const v=localStorage.getItem(STORE_KEY); if(v){ const s=JSON.parse(v); if(Array.isArray(s)) stored=s; } }catch(e){}
