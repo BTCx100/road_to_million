@@ -1261,7 +1261,14 @@ async function updateFromAPI(){
   const clean={date:draw.date,first:draw.first,front3:draw.front3,back3:draw.back3,back2:draw.back2};
   if(draw.extra) clean.extra=draw.extra;
   try{ localStorage.setItem(FETCH_MARK, new Date().toISOString()); }catch(e){}
-  if(DATA.some(d=>d.date===clean.date)) return {ok:true, added:false, draw:clean, reason:'งวดล่าสุดยังไม่อัปเดตในระบบ (API ยังเป็นงวดเดิม)'};
+  const existIdx=DATA.findIndex(d=>d.date===clean.date);
+  if(existIdx>=0){
+    // งวดนี้มีอยู่แล้ว — แต่ถ้าของเดิมไม่มี extra หรือข้อมูลไม่ครบ ให้อัปเดตด้วยข้อมูลเต็มจาก API
+    const old=DATA[existIdx];
+    const needUpdate = !old.extra || !old.front3?.[0] || !old.back3?.[0];
+    if(needUpdate){ DATA[existIdx]={...old, ...clean}; await saveData(); refresh(); return {ok:true, added:false, updated:true, draw:clean, reason:'อัปเดตข้อมูลรางวัลครบทุกประเภทของงวดนี้แล้ว'}; }
+    return {ok:true, added:false, draw:clean, reason:'งวดล่าสุดยังไม่อัปเดตในระบบ (API ยังเป็นงวดเดิม)'};
+  }
   DATA.unshift(clean); await saveData(); refresh();
   return {ok:true, added:true, draw:clean};
 }
